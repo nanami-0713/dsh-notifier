@@ -87,7 +87,7 @@ dev_install_package {"dir": "<本目录>"}
 
 | 字段 | 默认 | 说明 |
 | --- | --- | --- |
-| `floating` | `true` | 跨窗口悬浮面板（macOS Swift notifier / Linux zenity / Windows MessageBox） |
+| `floating` | `true` | 跨窗口系统弹窗（macOS Swift notifier / Windows PowerShell `WScript.Shell.Popup` / Linux zenity） |
 | `desktop` | `true` | 系统通知中心横幅 |
 | `webUrl` | `$DSH_WEB_URL` 或 `http://127.0.0.1:3080` | 悬浮面板「去处理 / 查看会话」按钮打开的地址 |
 | `quietSeconds` | `8` | 同一事件的最短重复提醒间隔（秒） |
