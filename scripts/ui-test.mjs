@@ -107,8 +107,8 @@ class Cdp {
     if (result.exceptionDetails) throw new Error(`evaluate 失败: ${result.exceptionDetails.text}`)
     return result.result?.value
   }
-  async screenshot(file) {
-    const result = await this.send('Page.captureScreenshot', { format: 'png' })
+  async screenshot(file, clip) {
+    const result = await this.send('Page.captureScreenshot', { format: 'png', ...(clip ? { clip } : {}) })
     writeFileSync(file, Buffer.from(result.data, 'base64'))
     console.log(`  📸 ${file}`)
   }
@@ -147,6 +147,25 @@ async function waitSelectorGone(cdp, selector, timeoutMs = 15000) {
   throw new Error(`等待 ${selector} 消失超时`)
 }
 
+/** 只截弹窗本体（局部 clip），避免把工作区文件树等本地信息截进公开截图。 */
+async function captureToastClip(cdp, selector, file) {
+  const rect = await cdp.eval(`(() => {
+    const el = document.querySelector(${JSON.stringify(selector)})
+    if (!el) return null
+    const r = el.getBoundingClientRect()
+    return { x: r.x, y: r.y, width: r.width, height: r.height }
+  })()`)
+  if (!rect) throw new Error(`截图目标不存在: ${selector}`)
+  const pad = 18
+  await cdp.screenshot(file, {
+    x: Math.max(0, rect.x - pad),
+    y: Math.max(0, rect.y - pad),
+    width: rect.width + pad * 2,
+    height: rect.height + pad * 2,
+    scale: 2,
+  })
+}
+
 /* ─────────── 主流程 ─────────── */
 const chrome = spawn(CHROME, [
   '--headless=new',
@@ -173,7 +192,6 @@ try {
   const hook = await cdp.eval('typeof window.__DSH_NOTIFIER__?.demo')
   if (hook !== 'function') throw new Error('window.__DSH_NOTIFIER__.demo 未就绪')
   console.log('   ✓ 插件已挂载，demo hook 就绪')
-  await cdp.screenshot(join(SCREENSHOT_DIR, '00-page.png'))
 
   console.log('3. 真实事件：任务结束 → kind-done toast')
   {
@@ -186,7 +204,7 @@ try {
     console.log(`   [done] 会话 ${sessionId} 已派发任务`)
     await waitSelector(cdp, '.dsh-notifier-toast.kind-done', 90000)
     await sleep(900)
-    await cdp.screenshot(join(SCREENSHOT_DIR, '01-task-done.png'))
+    await captureToastClip(cdp, '.dsh-notifier-toast.kind-done', join(SCREENSHOT_DIR, '01-task-done.png'))
     console.log('   ✓ 任务结束弹窗出现并截图')
   }
 
@@ -206,7 +224,7 @@ try {
     console.log(`   [approval] rpcId=${approval.rpcId}`)
     await waitSelector(cdp, '.dsh-notifier-toast.kind-approval', 90000)
     await sleep(900)
-    await cdp.screenshot(join(SCREENSHOT_DIR, '02-approval-needed.png'))
+    await captureToastClip(cdp, '.dsh-notifier-toast.kind-approval', join(SCREENSHOT_DIR, '02-approval-needed.png'))
     console.log('   ✓ 审批弹窗出现并截图')
     await respondTo(approval.rpcId, {
       sessionId,
@@ -233,7 +251,7 @@ try {
     console.log(`   [question] rpcId=${question.rpcId}`)
     await waitSelector(cdp, '.dsh-notifier-toast.kind-question', 90000)
     await sleep(900)
-    await cdp.screenshot(join(SCREENSHOT_DIR, '03-question-needed.png'))
+    await captureToastClip(cdp, '.dsh-notifier-toast.kind-question', join(SCREENSHOT_DIR, '03-question-needed.png'))
     console.log('   ✓ 提问弹窗出现并截图')
     const first = question.frame.questions[0]
     await respondTo(question.rpcId, {
@@ -248,7 +266,7 @@ try {
   await cdp.eval(`window.__DSH_NOTIFIER__.demo('error')`)
   await waitSelector(cdp, '.dsh-notifier-toast.kind-error')
   await sleep(900)
-  await cdp.screenshot(join(SCREENSHOT_DIR, '04-agent-error.png'))
+  await captureToastClip(cdp, '.dsh-notifier-toast.kind-error', join(SCREENSHOT_DIR, '04-agent-error.png'))
   console.log('   ✓ 错误弹窗截图完成')
 
   console.log('UI E2E ALL PASS ✅')
