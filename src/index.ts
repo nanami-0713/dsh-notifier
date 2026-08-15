@@ -119,6 +119,16 @@ function appleScriptString(text: string): string {
   return JSON.stringify(String(text).replace(/[\r\n]+/g, ' '))
 }
 
+/** POSIX sh 单引号转义（Linux zenity/xdg-open 使用）。 */
+function shellQuote(text: string): string {
+  return `'${String(text).replace(/'/g, `'\\''`)}'`
+}
+
+/** PowerShell 单引号字符串转义。 */
+function psString(text: string): string {
+  return `'${String(text).replace(/'/g, "''")}'`
+}
+
 function errorText(error: unknown): string {
   if (error instanceof Error) return error.message
   return String(error).slice(0, 200)
@@ -283,24 +293,27 @@ export function apply(ctx: Context, raw: NotifierConfig = {}): void {
         // zenity 提供跨窗口对话框；没有 zenity 时退化为 notify-send。
         const hasZenity = spawnSync('which', ['zenity'], { encoding: 'utf8' }).status === 0
         if (hasZenity) {
-          const zenityArgs = ['--question', '--title', title, '--text', message,
-            '--ok-label', opts.primaryLabel, '--cancel-label', secondary]
-          const child = spawn('zenity', zenityArgs, { detached: true, stdio: 'ignore' })
+          const script =
+            `zenity --question --title ${shellQuote(title)} --text ${shellQuote(message)} ` +
+            `--ok-label ${shellQuote(opts.primaryLabel)} --cancel-label ${shellQuote(secondary)} ` +
+            `&& xdg-open ${shellQuote(config.webUrl)}`
+          const child = spawn('/bin/sh', ['-c', script], { detached: true, stdio: 'ignore' })
           return registerPanel(child, opts.panelKey)
         }
         return null
       }
       if (process.platform === 'win32') {
-        const buttons = opts.sticky ? 'YesNo' : 'OK'
+        // Windows 自带 WScript.Shell.Popup：跨窗口系统弹窗，支持超时自动消失。
+        // YesNo 按钮返回 6（Yes）/ 7（No）；spawn 子进程以便决策解决时联动关闭。
+        const buttonKind = opts.sticky ? '4' : '0'
+        const timeoutSeconds = opts.sticky ? '0' : String(ttl)
         const ps =
-          `Add-Type -AssemblyName System.Windows.Forms;` +
-          `$r=[System.Windows.Forms.MessageBox]::Show(${JSON.stringify(message)},` +
-          `${JSON.stringify(title)},[System.Windows.Forms.MessageBoxButtons]::${buttons},` +
-          `[System.Windows.Forms.MessageBoxIcon]::Information,` +
-          `[System.Windows.Forms.MessageBoxDefaultButton]::Button1,` +
-          `[System.Windows.Forms.MessageBoxOptions]::DefaultDesktopOnly);` +
-          (opts.sticky ? `if($r -eq [System.Windows.Forms.DialogResult]::Yes){Start-Process '${config.webUrl}'}` : '')
-        execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { timeout: 120_000 }, () => {})
+          `$ws = New-Object -ComObject WScript.Shell;` +
+          `$r = $ws.Popup(${psString(message)}, ${timeoutSeconds}, ${psString(title)}, ` +
+          `${buttonKind} + 64);` +
+          (opts.sticky ? `if ($r -eq 6) { Start-Process ${psString(config.webUrl)} }` : '')
+        const child = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { stdio: 'ignore' })
+        return registerPanel(child, opts.panelKey)
       }
     } catch (error) {
       log(`floating notify 失败：${errorText(error)}`)

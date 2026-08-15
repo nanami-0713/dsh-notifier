@@ -1,6 +1,6 @@
 {
   "name": "@dsh-external/dsh-notifier",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "DSH 任务结束 / 需要用户决策时的跨窗口弹窗提醒：web toast + macOS always-on-top 悬浮面板 + 系统通知，类似 Codex / Claude Code 的 Hook 提醒体验",
   "private": false,
   "type": "module",

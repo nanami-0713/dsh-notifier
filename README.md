@@ -26,9 +26,25 @@ DSH 的任务提醒插件：**任务运行结束**、**运行中需要你做决�
 | 用户提问 | `session/event`：`tool/call`（`ask_user_question`）；对应 `tool/result` 关闭面板 | `events.mux` 流 `question/requested` / `question/resolved` |
 | 任务出错 | `agent/error` | `events.host` 流 `host/agent-error` |
 
-- macOS 悬浮面板：首次触发时用 `swiftc` 把 `assets/macos/DSHNotifier.swift` 编译缓存到 `~/.dsh/plugins/dsh-notifier/DSHNotifier`，之后直接拉起；无 `swiftc` 时回退 `osascript display dialog / notification`
-- Linux：`zenity` 跨窗口对话框（无 zenity 回退 `notify-send`）；Windows：PowerShell `MessageBox`
 - client 用 `ctx.connection` 消费两条实时事件流，断线自动重连；host 与 client 相互独立，任一失效不影响另一半
+- 跨窗口提醒的机制随操作系统不同，见下一节「平台差异与要求」
+
+## 平台差异与要求
+
+网页内 toast 在三个平台完全一致（任何浏览器）。**跨窗口系统弹窗**按平台选择不同实现，行为对比如下：
+
+| 能力 | macOS | Windows | Linux |
+| --- | --- | --- | --- |
+| 弹窗机制 | 内置 Swift notifier 悬浮卡片（NSPanel `.floating`，**跨桌面 Space / 全屏应用可见**） | Windows 自带 PowerShell + `WScript.Shell.Popup` 系统弹窗 | `zenity` 系统对话框 |
+| 首次使用依赖 | 需要 **Xcode Command Line Tools**（`swiftc`），首次触发自动编译并缓存到 `~/.dsh/plugins/dsh-notifier/DSHNotifier`；无 `swiftc` 自动回退 `osascript display dialog / notification` | **无额外依赖**（`powershell.exe` 系统自带） | 需要 `zenity`（多数发行版：`sudo apt install zenity` / `dnf install zenity`）；无 zenity 时退化为 `notify-send` 横幅 |
+| 任务结束 / 出错 | 10 秒自动消失 | 10 秒自动消失 | 10 秒自动消失 |
+| 审批 / 提问 | 钉住，网页端处理完自动关闭 | 钉住，网页端处理完自动关闭 | 钉住，网页端处理完自动关闭 |
+| 「去处理」按钮 | 点击直接打开 DSH（`webUrl`） | 弹窗点 Yes 打开 DSH | 弹窗点 OK 后 `xdg-open` 打开 DSH |
+| 外观 | 与网页 toast 同款深色卡片 | **系统对话框样式**（不可自定义） | **系统对话框样式**（不可自定义） |
+| 虚拟桌面 / 全屏 | 支持（`canJoinAllSpaces` + `fullScreenAuxiliary`） | 弹窗会置顶，跨虚拟桌面行为以系统为准 | 随桌面环境（GNOME/KDE）行为 |
+| 实测状态 | ✅ 本仓库真机验收（窗口枚举确认 `.floating` 层上屏） | ⚠️ 未在 Windows 真机验证，欢迎 issue 反馈 | ⚠️ 未在 Linux 真机验证，欢迎 issue 反馈 |
+
+如果不想弹系统级弹窗，可把插件配置里的 `floating` 设为 `false`（只保留通知中心横幅 + 网页 toast）。
 
 ## 安装
 
