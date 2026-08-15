@@ -9,17 +9,11 @@ DSH 的任务提醒插件：**任务运行结束**、**运行中需要你做决�
 
 ## 效果截图
 
-### 跨窗口悬浮面板（浮在其他应用之上）
+跨窗口悬浮面板与网页内 toast 使用同一套卡片设计，下面即实际样式：
 
 | 任务完成 | 需要批准 | 需要回答 |
 | --- | --- | --- |
-| ![原生-任务完成](docs/screenshots/native/01-task-done.png) | ![原生-需要批准](docs/screenshots/native/02-approval-needed.png) | ![原生-需要回答](docs/screenshots/native/03-question-needed.png) |
-
-### DSH 网页内 toast（仅截弹窗局部，不含工作区内容）
-
-| 任务完成 | 需要批准 | 需要回答 |
-| --- | --- | --- |
-| ![web-任务完成](docs/screenshots/01-task-done.png) | ![web-需要批准](docs/screenshots/02-approval-needed.png) | ![web-需要回答](docs/screenshots/03-question-needed.png) |
+| ![任务完成](docs/screenshots/native/01-task-done.png) | ![需要批准](docs/screenshots/native/02-approval-needed.png) | ![需要回答](docs/screenshots/native/03-question-needed.png) |
 
 ## 工作原理
 
@@ -99,7 +93,7 @@ macOS 上可用 CoreGraphics 窗口枚举验证面板确实浮在屏幕上（`kC
 swiftc scripts/winlist.swift -o /tmp/winlist && /tmp/winlist
 ```
 
-UI 测试只截取弹窗局部（`Page.captureScreenshot` clip，不含页面其他区域），产出 `docs/screenshots/*.png`，并在结束后把测试会话归档清理。
+UI 测试只截取弹窗局部（`Page.captureScreenshot` clip，不含页面其他区域），输出到不入库的 `.artifacts/ui/`，并在结束后把测试会话归档清理。仓库中正式截图只保留 `docs/screenshots/native/` 一套。
 
 ## License
 

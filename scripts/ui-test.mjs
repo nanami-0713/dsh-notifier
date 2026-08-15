@@ -10,7 +10,8 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
-const SCREENSHOT_DIR = join(ROOT, 'docs', 'screenshots')
+/** 测试截图写入不入库的临时目录；仓库只保留 docs/screenshots/native 一套正式图。 */
+const SCREENSHOT_DIR = join(ROOT, '.artifacts', 'ui')
 const BASE = 'http://127.0.0.1:3080'
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'
 const PORT = 9333
