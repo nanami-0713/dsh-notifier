@@ -1,0 +1,6 @@
+# @dsh-external/dsh-notifier — DSH bundle patch.
+# Host half: 监听 agent/status 与 approval/request，发原生桌面通知。
+# Client half: 在 web 的 shell.overlay 槽位挂 toast 弹窗栈。
+- insert:
+    - id: dsh-notifier
+      name: '@dsh-external/dsh-notifier'
