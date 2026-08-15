@@ -1,13 +1,14 @@
 {
   "name": "@dsh-external/dsh-notifier",
-  "version": "0.1.0",
-  "description": "DSH 任务结束 / 需要用户决策时的弹窗提醒：web 内 toast 弹窗 + macOS/Windows/Linux 原生桌面通知，类似 Codex / Claude Code 的提醒体验",
+  "version": "0.2.0",
+  "description": "DSH 任务结束 / 需要用户决策时的跨窗口弹窗提醒：web toast + macOS always-on-top 悬浮面板 + 系统通知，类似 Codex / Claude Code 的 Hook 提醒体验",
   "private": false,
   "type": "module",
   "main": "./lib/index.js",
   "types": "./lib/types/index.d.ts",
   "files": [
     "lib",
+    "assets",
     "cordis.patch.yml"
   ],
   "license": "MIT",

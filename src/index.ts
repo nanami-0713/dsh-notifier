@@ -1,27 +1,39 @@
 /**
- * @dsh-external/dsh-notifier — host half（桌面通知）。
+ * @dsh-external/dsh-notifier — host half（系统级提醒，相当于 Claude Code 的 Hook）。
  *
- * 监听 DSH 运行时事件，在「任务结束」和「需要用户决策」时发一条操作系统级
- * 原生通知（macOS / Linux / Windows 尽力而为），并把事件写入插件日志：
+ * 监听 DSH 运行时事件，在「任务结束」「需要用户决策（审批/提问）」「任务出错」时：
+ *   1. 拉起跨窗口可见的 always-on-top 悬浮面板（macOS 用自带 Swift notifier，
+ *      NSPanel .floating + canJoinAllSpaces：浮在所有应用之上、所有 Space/全屏可见；
+ *      Linux/Windows 尽力回退到 zenity / MessageBox）；
+ *   2. 同时发一条系统通知中心横幅（可配置关闭）；
+ *   3. 写插件日志（~/.dsh/super-injector/dsh-notifier.log）。
+ *
+ * 观察的事件：
  * - agent/status: running → idle 边沿 = 一次任务结束
- * - approval/request: 权限审批询问（观察者：只提醒，不劫持 answerer 链）
+ * - session/event: approval/asked = 权限审批询问
+ * - session/event: tool/call(ask_user_question) = 用户提问
+ * - approval/request waterfall = 审批观察面的辅助路径（不劫持 answerer 链）
  * - agent/error: 无 turn 位置的 agent 失败
  *
- * web 内的 toast 弹窗由 client half（src/client）负责，两者相互独立，
- * 任一失效都不影响另一半。
+ * web 内的 toast 弹窗由 client half（src/client）负责，两者相互独立。
  */
-import { execFile } from 'node:child_process'
-import { appendFileSync, mkdirSync } from 'node:fs'
+import { execFile, spawn, spawnSync, type ChildProcess } from 'node:child_process'
+import { appendFileSync, existsSync, mkdirSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import type { Context } from '@deepseek-ai/cordis'
 
 export const name = '@dsh-external/dsh-notifier'
 export const inject = []
 
 export interface NotifierConfig {
-  /** 发操作系统原生通知（默认 true） */
+  /** 系统通知中心横幅（默认 true） */
   desktop?: boolean
+  /** 跨窗口悬浮面板（默认 true） */
+  floating?: boolean
+  /** 悬浮面板「去处理/查看会话」按钮打开的 DSH 地址（默认 $DSH_WEB_URL 或 http://127.0.0.1:3080） */
+  webUrl?: string
   /** 同一事件的最短重复提醒间隔，秒（默认 8） */
   quietSeconds?: number
 }
@@ -59,6 +71,11 @@ interface SessionEventLike {
     callId?: string
     reason?: string
     name?: string
+    message?: {
+      source?: {
+        callId?: string
+      }
+    }
   }
 }
 
@@ -71,9 +88,27 @@ declare module '@deepseek-ai/cordis' {
   }
 }
 
-const DEFAULTS: Required<NotifierConfig> = {
+type NotifyKind = 'done' | 'approval' | 'question' | 'error'
+
+interface FloatingOptions {
+  sticky: boolean
+  primaryLabel: string
+  /** 决策面板的稳定 key；对应决策解决时自动关闭（approval:<id> / question:<callId>） */
+  panelKey?: string
+}
+
+const DEFAULTS: Required<Omit<NotifierConfig, 'webUrl'>> & { webUrl: string } = {
   desktop: true,
+  floating: true,
+  webUrl: process.env.DSH_WEB_URL || 'http://127.0.0.1:3080',
   quietSeconds: 8,
+}
+
+const KIND_SOUND: Record<NotifyKind, string> = {
+  done: 'Glass',
+  approval: 'Ping',
+  question: 'Ping',
+  error: 'Basso',
 }
 
 function shortId(id: string): string {
@@ -81,7 +116,6 @@ function shortId(id: string): string {
 }
 
 function appleScriptString(text: string): string {
-  // AppleScript 字符串字面量用双引号，把换行压平避免多行脚本问题。
   return JSON.stringify(String(text).replace(/[\r\n]+/g, ' '))
 }
 
@@ -91,11 +125,14 @@ function errorText(error: unknown): string {
 }
 
 export function apply(ctx: Context, raw: NotifierConfig = {}): void {
-  const config: Required<NotifierConfig> = { ...DEFAULTS, ...raw }
+  const config = { ...DEFAULTS, ...raw }
   const dshHome = process.env.DSH_HOME || join(homedir(), '.dsh')
   const logFile = join(dshHome, 'super-injector', 'dsh-notifier.log')
+  const notifierDir = join(dshHome, 'plugins', 'dsh-notifier')
   const lastSeenStatus = new Map<string, 'idle' | 'running'>()
   const lastNotified = new Map<string, number>()
+  const activeNotifiers = new Set<ChildProcess>()
+  const decisionPanels = new Map<string, ChildProcess>()
 
   const log = (message: string): void => {
     const line = `[${new Date().toISOString()}] ${message}`
@@ -121,6 +158,13 @@ export function apply(ctx: Context, raw: NotifierConfig = {}): void {
     return true
   }
 
+  const trackSpawn = (child: ChildProcess): void => {
+    activeNotifiers.add(child)
+    child.once('exit', () => activeNotifiers.delete(child))
+    child.unref?.()
+  }
+
+  /* ─────────── 通知中心横幅（best-effort） ─────────── */
   const desktopNotify = (title: string, message: string, sound = 'Glass'): void => {
     if (!config.desktop) return
     const safeTitle = appleScriptString(title)
@@ -148,59 +192,205 @@ export function apply(ctx: Context, raw: NotifierConfig = {}): void {
     }
   }
 
-  const notify = (kind: string, title: string, message: string, sound?: string): void => {
+  /* ─────────── 跨窗口悬浮面板 ─────────── */
+
+  let darwinBinary: string | null = null
+  let darwinCompile: Promise<string | null> | null = null
+
+  /** 首次使用时用 swiftc 编译内置 notifier，缓存到 ~/.dsh/plugins/dsh-notifier/DSHNotifier。 */
+  function ensureDarwinNotifier(): Promise<string | null> {
+    if (darwinBinary) return Promise.resolve(darwinBinary)
+    if (darwinCompile) return darwinCompile
+    darwinCompile = (async () => {
+      try {
+        const bin = join(notifierDir, 'DSHNotifier')
+        if (existsSync(bin)) {
+          darwinBinary = bin
+          return bin
+        }
+        const src = fileURLToPath(new URL('../assets/macos/DSHNotifier.swift', import.meta.url))
+        if (!existsSync(src)) return null
+        mkdirSync(notifierDir, { recursive: true })
+        const result = spawnSync('swiftc', ['-O', '-swift-version', '5', src, '-o', bin], {
+          timeout: 90_000,
+          encoding: 'utf8',
+        })
+        if (result.status !== 0 || !existsSync(bin)) {
+          log(`swift notifier 编译失败，回退到 osascript：${(result.stderr || result.error?.message || '').slice(0, 200)}`)
+          return null
+        }
+        darwinBinary = bin
+        log(`swift notifier 已就绪：${bin}`)
+        return bin
+      } catch (error) {
+        log(`swift notifier 准备失败：${errorText(error)}`)
+        return null
+      }
+    })()
+    return darwinCompile
+  }
+
+  const registerPanel = (child: ChildProcess, key?: string): ChildProcess => {
+    trackSpawn(child)
+    if (key) {
+      decisionPanels.get(key)?.kill()
+      decisionPanels.set(key, child)
+      child.once('exit', () => {
+        if (decisionPanels.get(key) === child) decisionPanels.delete(key)
+      })
+    }
+    return child
+  }
+
+  async function floatingNotify(
+    kind: NotifyKind,
+    title: string,
+    message: string,
+    opts: FloatingOptions,
+  ): Promise<ChildProcess | null> {
+    if (!config.floating) return null
+    const ttl = opts.sticky ? 0 : 10
+    const secondary = opts.sticky ? '忽略' : '知道了'
+    const args = [
+      '--kind', kind,
+      '--title', title,
+      '--message', message,
+      '--primary', opts.primaryLabel,
+      '--secondary', secondary,
+      '--url', config.webUrl,
+      '--ttl', String(ttl),
+    ]
+    try {
+      if (process.platform === 'darwin') {
+        const bin = await ensureDarwinNotifier()
+        if (bin) {
+          const child = spawn(bin, args, { detached: true, stdio: 'ignore' })
+          return registerPanel(child, opts.panelKey)
+        }
+        // 回退：有按钮的用 display dialog；无按钮的退回通知中心横幅。
+        if (opts.sticky) {
+          const script =
+            `set answer to button returned of (display dialog ${appleScriptString(message)} ` +
+            `with title ${appleScriptString(title)} ` +
+            `buttons {${appleScriptString('忽略')}, ${appleScriptString(opts.primaryLabel)}} ` +
+            `default button ${appleScriptString(opts.primaryLabel)} with icon caution)\n` +
+            `if answer is ${appleScriptString(opts.primaryLabel)} then do shell script "open ${config.webUrl.replace(/"/g, '\\"')}"`
+          execFile('/usr/bin/osascript', ['-e', script], { timeout: 120_000 }, () => {})
+        }
+        return null
+      }
+      if (process.platform === 'linux') {
+        // zenity 提供跨窗口对话框；没有 zenity 时退化为 notify-send。
+        const hasZenity = spawnSync('which', ['zenity'], { encoding: 'utf8' }).status === 0
+        if (hasZenity) {
+          const zenityArgs = ['--question', '--title', title, '--text', message,
+            '--ok-label', opts.primaryLabel, '--cancel-label', secondary]
+          const child = spawn('zenity', zenityArgs, { detached: true, stdio: 'ignore' })
+          return registerPanel(child, opts.panelKey)
+        }
+        return null
+      }
+      if (process.platform === 'win32') {
+        const buttons = opts.sticky ? 'YesNo' : 'OK'
+        const ps =
+          `Add-Type -AssemblyName System.Windows.Forms;` +
+          `$r=[System.Windows.Forms.MessageBox]::Show(${JSON.stringify(message)},` +
+          `${JSON.stringify(title)},[System.Windows.Forms.MessageBoxButtons]::${buttons},` +
+          `[System.Windows.Forms.MessageBoxIcon]::Information,` +
+          `[System.Windows.Forms.MessageBoxDefaultButton]::Button1,` +
+          `[System.Windows.Forms.MessageBoxOptions]::DefaultDesktopOnly);` +
+          (opts.sticky ? `if($r -eq [System.Windows.Forms.DialogResult]::Yes){Start-Process '${config.webUrl}'}` : '')
+        execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { timeout: 120_000 }, () => {})
+      }
+    } catch (error) {
+      log(`floating notify 失败：${errorText(error)}`)
+    }
+    return null
+  }
+
+  const notify = (
+    kind: NotifyKind,
+    title: string,
+    message: string,
+    opts: FloatingOptions,
+  ): void => {
     const key = `${kind}:${message}`
     if (!dedupe(key)) return
     log(`${kind} → ${title} | ${message}`)
-    desktopNotify(title, message, sound)
+    desktopNotify(title, message, KIND_SOUND[kind])
+    void floatingNotify(kind, title, message, opts)
   }
+
+  /* ─────────── 事件监听（Hook） ─────────── */
 
   ctx.on('agent/status', ({ agent, status }) => {
     const previous = lastSeenStatus.get(agent.id)
     lastSeenStatus.set(agent.id, status)
     if (previous === 'running' && status === 'idle') {
-      notify('task-done', 'DSH 任务完成', `会话 ${shortId(agent.id)} 已运行结束，可以查看结果了`, 'Glass')
+      notify('done', 'DSH 任务完成', `会话 ${shortId(agent.id)} 已运行结束，可以查看结果了`, {
+        sticky: false,
+        primaryLabel: '查看会话',
+      })
     }
   })
 
   ctx.on('approval/request', (req, next) => {
     const tool = req.toolName ?? '一个工具'
     const reason = req.reason ? `：${req.reason}` : ''
-    notify(
-      'approval-needed',
-      'DSH 需要你的决策',
-      `会话 ${shortId(req.agent.id)} 请求执行「${tool}」${reason}`,
-      'Ping',
-    )
+    notify('approval', 'DSH 需要你的批准', `会话 ${shortId(req.agent.id)} 请求执行「${tool}」${reason}`, {
+      sticky: true,
+      primaryLabel: '去处理',
+    })
     return next()
   })
 
   // 权威观察面：approval/request 是 waterfall，web 审批 answerer 可能先截断链路，
-  // 因此同时监听持久化审计事件 session/event（approval/asked / ask_user_question 工具调用）。
-  // dedupe 会把两条路径产生的重复通知合并为一条。
+  // 因此同时监听持久化审计事件 session/event。dedupe 会把两条路径合并为一条。
   ctx.on('session/event', (session, event) => {
     if (event.type === 'approval/asked') {
       const tool = event.data?.toolName ?? '一个工具'
       const reason = event.data?.reason ? `：${event.data.reason}` : ''
-      notify(
-        'approval-needed',
-        'DSH 需要你的决策',
-        `会话 ${shortId(session.id)} 请求执行「${tool}」${reason}`,
-        'Ping',
-      )
+      const panelKey = event.data?.id ? `approval:${event.data.id}` : undefined
+      notify('approval', 'DSH 需要你的批准', `会话 ${shortId(session.id)} 请求执行「${tool}」${reason}`, {
+        sticky: true,
+        primaryLabel: '去处理',
+        panelKey,
+      })
+    } else if (event.type === 'approval/decided') {
+      if (event.data?.id) {
+        const key = `approval:${event.data.id}`
+        decisionPanels.get(key)?.kill()
+        decisionPanels.delete(key)
+      }
     } else if (event.type === 'tool/call' && event.data?.name === 'ask_user_question') {
-      notify(
-        'question-needed',
-        'DSH 需要你回答',
-        `会话 ${shortId(session.id)} 正在等待你回答问题`,
-        'Ping',
-      )
+      const panelKey = event.data.callId ? `question:${event.data.callId}` : undefined
+      notify('question', 'DSH 需要你回答', `会话 ${shortId(session.id)} 正在等待你回答问题`, {
+        sticky: true,
+        primaryLabel: '去处理',
+        panelKey,
+      })
+    } else if (event.type === 'tool/result') {
+      const callId = event.data?.message?.source?.callId
+      if (callId) {
+        const key = `question:${callId}`
+        decisionPanels.get(key)?.kill()
+        decisionPanels.delete(key)
+      }
     }
   })
 
   ctx.on('agent/error', ({ agent, error }) => {
-    notify('agent-error', 'DSH 任务出错', `会话 ${shortId(agent.id)}：${errorText(error)}`, 'Basso')
+    notify('error', 'DSH 任务出错', `会话 ${shortId(agent.id)}：${errorText(error)}`, {
+      sticky: false,
+      primaryLabel: '查看会话',
+    })
   })
 
-  log(`host half 已启动（desktop=${config.desktop}, quietSeconds=${config.quietSeconds}）`)
+  ctx.effect(() => () => {
+    for (const child of activeNotifiers) {
+      try { child.kill() } catch { /* 已退出 */ }
+    }
+  }, `${name}: notifier cleanup`)
+
+  log(`host half 已启动（desktop=${config.desktop}, floating=${config.floating}, webUrl=${config.webUrl}）`)
 }
