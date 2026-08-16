@@ -6,7 +6,9 @@
  *      NSPanel .floating + canJoinAllSpaces：浮在所有应用之上、所有 Space/全屏可见；
  *      Linux/Windows 尽力回退到 zenity / MessageBox）；
  *   2. 同时发一条系统通知中心横幅（可配置关闭）；
- *   3. 写插件日志（~/.dsh/super-injector/dsh-notifier.log）。
+ *   3. 配置了 dsh-remote bridge 时，把「任务完成」「需要你回答」两类提醒
+ *      再推一份给已连接的手机（POST /api/notify.push，见 pushBridgeNotify）；
+ *   4. 写插件日志（~/.dsh/super-injector/dsh-notifier.log）。
  *
  * 观察的事件：
  * - agent/status: running → idle 边沿 = 一次任务结束
@@ -34,7 +36,7 @@ import {
 } from './shared.js'
 
 export const name = '@dsh-external/dsh-notifier'
-export const inject = []
+export const inject = ['webServer']
 
 export interface NotifierConfig {
   /** 系统通知中心横幅（默认 true） */
@@ -43,6 +45,10 @@ export interface NotifierConfig {
   floating?: boolean
   /** 悬浮面板「去处理/查看会话」按钮打开的 DSH 地址（默认 $DSH_WEB_URL 或 http://127.0.0.1:3080） */
   webUrl?: string
+  /** dsh-remote bridge 地址（如 http://127.0.0.1:8787）；留空不转发手机 */
+  bridgeUrl?: string
+  /** dsh-remote bridge 主 token；也可用环境变量 DSH_BRIDGE_TOKEN */
+  bridgeToken?: string
   /** 同一事件的最短重复提醒间隔，秒（默认 8） */
   quietSeconds?: number
 }
@@ -110,6 +116,8 @@ const DEFAULTS: Required<Omit<NotifierConfig, 'webUrl'>> & { webUrl: string } = 
   desktop: true,
   floating: true,
   webUrl: process.env.DSH_WEB_URL || 'http://127.0.0.1:3080',
+  bridgeUrl: '',
+  bridgeToken: process.env.DSH_BRIDGE_TOKEN || '',
   quietSeconds: 8,
 }
 
@@ -126,6 +134,8 @@ function resolveSettings(rawBase: NotifierConfig, userInput: unknown): NotifierS
     desktop: rawBase.desktop ?? DEFAULT_SETTINGS.desktop,
     quietSeconds: rawBase.quietSeconds ?? DEFAULT_SETTINGS.quietSeconds,
     webUrl: rawBase.webUrl ?? DEFAULT_SETTINGS.webUrl,
+    bridgeUrl: rawBase.bridgeUrl ?? DEFAULT_SETTINGS.bridgeUrl,
+    bridgeToken: rawBase.bridgeToken ?? process.env.DSH_BRIDGE_TOKEN ?? DEFAULT_SETTINGS.bridgeToken,
   }
 
   const merged: NotifierSettings = normalizeSettings({
@@ -138,6 +148,8 @@ function resolveSettings(rawBase: NotifierConfig, userInput: unknown): NotifierS
     ...(root.desktop !== undefined ? { desktop: root.desktop } : {}),
     ...(root.quietSeconds !== undefined ? { quietSeconds: root.quietSeconds } : {}),
     ...(root.webUrl !== undefined ? { webUrl: root.webUrl } : {}),
+    ...(root.bridgeUrl !== undefined ? { bridgeUrl: root.bridgeUrl } : {}),
+    ...(root.bridgeToken !== undefined ? { bridgeToken: root.bridgeToken } : {}),
   })
 
   // 只有显式改过行为字段才重新判定指纹；只选 preset（或只改 webUrl）时保留请求的预设 id。
@@ -210,6 +222,62 @@ function sendJson(res: ServerResponse, status: number, payload: unknown): void {
     'cache-control': 'no-store',
   })
   res.end(body)
+}
+
+export interface BridgeNotifyPayload {
+  kind: NotifyKind
+  title: string
+  message: string
+  sessionId?: string
+}
+
+/** 转发到手机的提醒种类（PC 弹窗的子集：任务完成 + 需要回答）。 */
+export const BRIDGE_NOTIFY_KINDS: ReadonlySet<NotifyKind> = new Set(['done', 'question'])
+
+const BRIDGE_PUSH_TIMEOUT_MS = 3000
+
+/**
+ * 把一条提醒推给 dsh-remote bridge（best-effort）：bridge 再广播给所有已连接
+ * 的手机。bridgeUrl/bridgeToken 任一为空则跳过；失败只记日志，不影响 PC 弹窗。
+ * 独立导出便于用 stub 服务器做回归测试。
+ */
+export async function pushBridgeNotify(
+  bridgeUrl: string,
+  bridgeToken: string,
+  payload: BridgeNotifyPayload,
+  log: (message: string) => void = () => {},
+): Promise<boolean> {
+  const baseUrl = String(bridgeUrl ?? '').trim().replace(/\/+$/, '')
+  const token = String(bridgeToken ?? '').trim()
+  if (!BRIDGE_NOTIFY_KINDS.has(payload.kind) || !baseUrl || !token) return false
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), BRIDGE_PUSH_TIMEOUT_MS)
+  try {
+    const res = await fetch(`${baseUrl}/api/notify.push`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        kind: payload.kind,
+        title: payload.title,
+        message: payload.message,
+        ...(payload.sessionId ? { sessionId: payload.sessionId } : {}),
+      }),
+      signal: controller.signal,
+    })
+    if (!res.ok) {
+      log(`手机推送失败：HTTP ${res.status}`)
+      return false
+    }
+    return true
+  } catch (error) {
+    log(`手机推送失败：${errorText(error)}`)
+    return false
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 export function apply(ctx: Context, raw: NotifierConfig = {}): void {
@@ -456,12 +524,15 @@ export function apply(ctx: Context, raw: NotifierConfig = {}): void {
     title: string,
     message: string,
     opts: FloatingOptions,
+    sessionId?: string,
   ): void => {
     const key = `${kind}:${message}`
     if (!dedupe(key)) return
     log(`${kind} → ${title} | ${message}`)
     desktopNotify(title, message, KIND_SOUND[kind])
     void floatingNotify(kind, title, message, opts)
+    // 给手机也发一份（仅 done/question 两类 hook 转发；bridge 未配置时静默跳过）。
+    void pushBridgeNotify(config.bridgeUrl, config.bridgeToken, { kind, title, message, sessionId }, log)
   }
 
   /* ─────────── 事件监听（Hook） ─────────── */
@@ -473,7 +544,7 @@ export function apply(ctx: Context, raw: NotifierConfig = {}): void {
       notify('done', 'DSH 任务完成', `会话 ${shortId(agent.id)} 已运行结束，可以查看结果了`, {
         sticky: false,
         primaryLabel: '查看会话',
-      })
+      }, agent.id)
     }
   })
 
@@ -483,7 +554,7 @@ export function apply(ctx: Context, raw: NotifierConfig = {}): void {
     notify('approval', 'DSH 需要你的批准', `会话 ${shortId(req.agent.id)} 请求执行「${tool}」${reason}`, {
       sticky: true,
       primaryLabel: '去处理',
-    })
+    }, req.agent.id)
     return next()
   })
 
@@ -498,7 +569,7 @@ export function apply(ctx: Context, raw: NotifierConfig = {}): void {
         sticky: true,
         primaryLabel: '去处理',
         panelKey,
-      })
+      }, session.id)
     } else if (event.type === 'approval/decided') {
       if (event.data?.id) {
         const key = `approval:${event.data.id}`
@@ -511,7 +582,7 @@ export function apply(ctx: Context, raw: NotifierConfig = {}): void {
         sticky: true,
         primaryLabel: '去处理',
         panelKey,
-      })
+      }, session.id)
     } else if (event.type === 'tool/result') {
       const callId = event.data?.message?.source?.callId
       if (callId) {
@@ -526,7 +597,7 @@ export function apply(ctx: Context, raw: NotifierConfig = {}): void {
     notify('error', 'DSH 任务出错', `会话 ${shortId(agent.id)}：${errorText(error)}`, {
       sticky: false,
       primaryLabel: '查看会话',
-    })
+    }, agent.id)
   })
 
   ctx.effect(() => () => {
@@ -535,5 +606,5 @@ export function apply(ctx: Context, raw: NotifierConfig = {}): void {
     }
   }, `${name}: notifier cleanup`)
 
-  log(`host half 已启动（desktop=${config.desktop}, floating=${config.floating}, webUrl=${config.webUrl}）`)
+  log(`host half 已启动（desktop=${config.desktop}, floating=${config.floating}, webUrl=${config.webUrl}, bridge=${config.bridgeUrl || 'off'}）`)
 }

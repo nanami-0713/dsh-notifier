@@ -45,6 +45,10 @@ export interface NotifierSettings {
   quietSeconds: number
   /** 系统弹窗「去处理」按钮打开的 DSH 地址。 */
   webUrl: string
+  /** dsh-remote bridge 地址（如 http://127.0.0.1:8787）；空 = 不转发到手机。 */
+  bridgeUrl: string
+  /** dsh-remote bridge 主 token（与 bridge 的 config.json token 一致）。 */
+  bridgeToken: string
 }
 
 export interface NotifierPreset {
@@ -72,6 +76,8 @@ export const DEFAULT_SETTINGS: NotifierSettings = Object.freeze({
   desktop: true,
   quietSeconds: 8,
   webUrl: 'http://127.0.0.1:3080',
+  bridgeUrl: '',
+  bridgeToken: '',
 })
 
 export const NOTIFIER_PRESETS: readonly NotifierPreset[] = [
@@ -85,6 +91,8 @@ export const NOTIFIER_PRESETS: readonly NotifierPreset[] = [
       desktop: true,
       quietSeconds: 8,
       webUrl: DEFAULT_SETTINGS.webUrl,
+      bridgeUrl: '',
+      bridgeToken: '',
     },
   },
   {
@@ -107,6 +115,8 @@ export const NOTIFIER_PRESETS: readonly NotifierPreset[] = [
       desktop: true,
       quietSeconds: 8,
       webUrl: DEFAULT_SETTINGS.webUrl,
+      bridgeUrl: '',
+      bridgeToken: '',
     },
   },
   {
@@ -129,6 +139,8 @@ export const NOTIFIER_PRESETS: readonly NotifierPreset[] = [
       desktop: false,
       quietSeconds: 30,
       webUrl: DEFAULT_SETTINGS.webUrl,
+      bridgeUrl: '',
+      bridgeToken: '',
     },
   },
   {
@@ -141,6 +153,8 @@ export const NOTIFIER_PRESETS: readonly NotifierPreset[] = [
       desktop: true,
       quietSeconds: 8,
       webUrl: DEFAULT_SETTINGS.webUrl,
+      bridgeUrl: '',
+      bridgeToken: '',
     },
   },
 ]
@@ -195,6 +209,8 @@ export function normalizeSettings(input: unknown): NotifierSettings {
     desktop: boolValue(root.desktop, DEFAULT_SETTINGS.desktop),
     quietSeconds: Math.round(clampNumber(root.quietSeconds, 0, 120, DEFAULT_SETTINGS.quietSeconds)),
     webUrl: stringValue(root.webUrl, DEFAULT_SETTINGS.webUrl, 512),
+    bridgeUrl: stringValue(root.bridgeUrl, DEFAULT_SETTINGS.bridgeUrl, 512),
+    bridgeToken: stringValue(root.bridgeToken, DEFAULT_SETTINGS.bridgeToken, 512),
   }
   settings.preset = canonicalPresetId(settings)
   return settings
@@ -228,11 +244,14 @@ export function canonicalPresetId(settings: NotifierSettings): string {
   return matched?.id ?? 'custom'
 }
 
-/** 应用一个预设：完整替换行为字段，并带上预设 id。 */
+/** 应用一个预设：完整替换行为字段，并带上预设 id。桥接字段与 webUrl 一样属于
+ *  环境配置（不是「行为」），切换预设时保留用户已填写的值。 */
 export function applyPreset(current: NotifierSettings, preset: NotifierPreset): NotifierSettings {
   return normalizeSettings({
     ...preset.settings,
     preset: preset.id,
     webUrl: current.webUrl,
+    bridgeUrl: current.bridgeUrl,
+    bridgeToken: current.bridgeToken,
   })
 }

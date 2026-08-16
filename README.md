@@ -6,6 +6,7 @@ DSH 的任务提醒插件：**任务运行结束**、**运行中需要你做决�
 - **web 内 toast 弹窗**：DSH 网页里的右下角深色通知卡片 + 提示音（React portal 挂在 `document.body`，保证浮在面板之上）
 - **系统通知中心横幅**：macOS `osascript` / Linux `notify-send` / Windows 气泡，可配置关闭
 - **决策型弹窗钉住不放**：审批 / 提问在 web 端被回答、被拒绝后，悬浮面板自动消失；任务结束/出错面板 10 秒自动消失
+- **手机同步提醒（v0.4）**：配合 [dsh-remote](https://github.com/nanami-0713/dsh-remote) bridge，把「任务完成」「需要你回答」两类 PC 弹窗再推一份给已连接的手机 App（App 前台显示横幅，点「查看」直达会话）
 - **设置页可视化配置（v0.3）**：左下角「设置」新增「提醒通知」页，内置 4 套预设（默认 / 顶部浅色 / 专注 / 仅系统弹窗），可调 toast 位置、主题、宽度、圆角、停留时长、提示音、同屏数量与系统级开关；修改实时生效并保存到 `~/.dsh/plugins/dsh-notifier/config.json`
 
 ## 效果截图
@@ -109,7 +110,19 @@ dev_install_package {"dir": "<本目录>"}
 | `floating` | `true` | 跨窗口系统弹窗（macOS Swift notifier / Windows PowerShell `WScript.Shell.Popup` / Linux zenity） |
 | `desktop` | `true` | 系统通知中心横幅 |
 | `webUrl` | `$DSH_WEB_URL` 或 `http://127.0.0.1:3080` | 悬浮面板「去处理 / 查看会话」按钮打开的地址 |
+| `bridgeUrl` | 空（关闭） | dsh-remote bridge 地址（如 `http://127.0.0.1:8787`），配置后把「任务完成 / 需要你回答」弹窗推给手机 |
+| `bridgeToken` | 空（关闭） | dsh-remote bridge 主 token（与 bridge `config.json` 的 `token` 一致）；也可用环境变量 `DSH_BRIDGE_TOKEN` |
 | `quietSeconds` | `8` | 同一事件的最短重复提醒间隔（秒） |
+
+## 手机推送（DSH-Remote bridge）
+
+当电脑同时运行 dsh-remote bridge、且手机 App 已连接时，把 PC 弹窗**原样发一份**到手机：
+
+1. 在「设置 → 提醒通知」最下方填写 bridge 地址与主 token（或在 `config.json` / loader 配置里写 `bridgeUrl`、`bridgeToken`）；
+2. 每次「任务完成」或「需要你回答」弹窗触发时，插件会 best-effort `POST /api/notify.push` 到 bridge（3 秒超时，失败只记日志、不影响 PC 弹窗）；
+3. bridge 校验主 token 后把 `bridge/notify` 帧广播给所有已连接的手机，App 顶部弹横幅，点「查看」直接打开对应会话。
+
+说明：只转发 `done`（任务完成）与 `question`（需要你回答）两类；审批/错误类暂不转发。手机 App 需要保持前台（事件流已连接），后台或未打开时无法送达。
 
 ## 验收测试
 

@@ -34,6 +34,7 @@ export const NOTIFIER_SETTINGS_CSS = `
 .dns-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
 .dns-field{display:flex;flex-direction:column;gap:6px;min-width:0}
 .dns-label{font-size:12px;color:var(--dsw-alias-label-secondary)}
+.dns-input{font:inherit;font-size:12px;line-height:20px;padding:7px 10px;border-radius:9px;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);width:100%;box-sizing:border-box}
 .dns-row{display:flex;align-items:center;justify-content:space-between;gap:10px}
 .dns-value{min-width:48px;text-align:right;font-variant-numeric:tabular-nums;color:var(--dsw-alias-label-secondary)}
 .dns-check{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--dsw-alias-label-secondary);cursor:pointer;user-select:none}
@@ -398,6 +399,46 @@ export function NotifierSettingsSection(props: { store: NotifierStore }): JSX.El
             mutate((previous) => ({ ...previous, preset: 'custom', quietSeconds }))
           }
         />
+      </div>
+
+      <div className="dns-card">
+        <h3>手机推送（DSH-Remote 桥接）</h3>
+        <p className="dns-muted">
+          在 dsh-remote bridge 配置了地址和主 token 后，PC 弹窗的「任务完成」「需要你回答」
+          会同步推给已连接的手机 App（App 前台时显示横幅，可点击直达会话）。留空 = 关闭。
+        </p>
+        <div className="dns-field">
+          <span className="dns-label">bridge 地址（如 http://127.0.0.1:8787）</span>
+          <input
+            type="text"
+            className="dns-input"
+            placeholder="http://127.0.0.1:8787"
+            value={draft.bridgeUrl}
+            onChange={(event) =>
+              mutate((previous) => ({
+                ...previous,
+                preset: 'custom',
+                bridgeUrl: event.target.value,
+              }))
+            }
+          />
+        </div>
+        <div className="dns-field">
+          <span className="dns-label">bridge 主 token（与 bridge config.json 的 token 一致）</span>
+          <input
+            type="password"
+            className="dns-input"
+            placeholder="留空则不转发"
+            value={draft.bridgeToken}
+            onChange={(event) =>
+              mutate((previous) => ({
+                ...previous,
+                preset: 'custom',
+                bridgeToken: event.target.value,
+              }))
+            }
+          />
+        </div>
       </div>
 
       <div className="dns-card">
