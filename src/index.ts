@@ -18,11 +18,20 @@
  * web 内的 toast 弹窗由 client half（src/client）负责，两者相互独立。
  */
 import { execFile, spawn, spawnSync, type ChildProcess } from 'node:child_process'
-import { appendFileSync, existsSync, mkdirSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { Context } from '@deepseek-ai/cordis'
+import {
+  CONFIG_API_PATH,
+  DEFAULT_SETTINGS,
+  canonicalPresetId,
+  normalizeSettings,
+  presetById,
+  type NotifierSettings,
+} from './shared.js'
 
 export const name = '@dsh-external/dsh-notifier'
 export const inject = []
@@ -104,6 +113,45 @@ const DEFAULTS: Required<Omit<NotifierConfig, 'webUrl'>> & { webUrl: string } = 
   quietSeconds: 8,
 }
 
+/** 合并顺序：内置默认 → loader 旧配置（部署默认）→ 用户选择的预设 → 用户显式覆盖字段。 */
+function resolveSettings(rawBase: NotifierConfig, userInput: unknown): NotifierSettings {
+  const root = typeof userInput === 'object' && userInput !== null && !Array.isArray(userInput)
+    ? userInput as Record<string, unknown>
+    : {}
+  const requestedPreset = root.preset === undefined ? 'default' : String(root.preset)
+  const preset = presetById(requestedPreset) ?? presetById('default')!
+
+  const legacy = {
+    floating: rawBase.floating ?? DEFAULT_SETTINGS.floating,
+    desktop: rawBase.desktop ?? DEFAULT_SETTINGS.desktop,
+    quietSeconds: rawBase.quietSeconds ?? DEFAULT_SETTINGS.quietSeconds,
+    webUrl: rawBase.webUrl ?? DEFAULT_SETTINGS.webUrl,
+  }
+
+  const merged: NotifierSettings = normalizeSettings({
+    ...legacy,
+    ...preset.settings,
+    preset: preset.id,
+    // 用户显式写过的字段最后覆盖预设
+    ...(root.toast !== undefined ? { toast: root.toast } : {}),
+    ...(root.floating !== undefined ? { floating: root.floating } : {}),
+    ...(root.desktop !== undefined ? { desktop: root.desktop } : {}),
+    ...(root.quietSeconds !== undefined ? { quietSeconds: root.quietSeconds } : {}),
+    ...(root.webUrl !== undefined ? { webUrl: root.webUrl } : {}),
+  })
+
+  // 只有显式改过行为字段才重新判定指纹；只选 preset（或只改 webUrl）时保留请求的预设 id。
+  const hasOverrides =
+    root.toast !== undefined ||
+    root.floating !== undefined ||
+    root.desktop !== undefined ||
+    root.quietSeconds !== undefined
+  merged.preset = hasOverrides
+    ? canonicalPresetId(merged)
+    : (presetById(requestedPreset) === undefined ? 'custom' : requestedPreset)
+  return merged
+}
+
 const KIND_SOUND: Record<NotifyKind, string> = {
   done: 'Glass',
   approval: 'Ping',
@@ -134,11 +182,93 @@ function errorText(error: unknown): string {
   return String(error).slice(0, 200)
 }
 
+const MAX_CONFIG_BODY_BYTES = 64 * 1024
+
+function readBody(req: IncomingMessage, limit: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = []
+    let size = 0
+    req.on('data', (chunk: Buffer) => {
+      size += chunk.length
+      if (size > limit) {
+        reject(new Error('配置请求体超过 64KB 上限'))
+        req.destroy()
+        return
+      }
+      chunks.push(chunk)
+    })
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
+    req.on('error', reject)
+  })
+}
+
+function sendJson(res: ServerResponse, status: number, payload: unknown): void {
+  const body = JSON.stringify(payload)
+  res.writeHead(status, {
+    'content-type': 'application/json; charset=utf-8',
+    'content-length': Buffer.byteLength(body),
+    'cache-control': 'no-store',
+  })
+  res.end(body)
+}
+
 export function apply(ctx: Context, raw: NotifierConfig = {}): void {
-  const config = { ...DEFAULTS, ...raw }
   const dshHome = process.env.DSH_HOME || join(homedir(), '.dsh')
   const logFile = join(dshHome, 'super-injector', 'dsh-notifier.log')
   const notifierDir = join(dshHome, 'plugins', 'dsh-notifier')
+  const configFile = join(notifierDir, 'config.json')
+  const readUserConfig = (): unknown => {
+    try {
+      return JSON.parse(readFileSync(configFile, 'utf8'))
+    } catch {
+      return {}
+    }
+  }
+  const saveUserConfig = (settings: NotifierSettings): void => {
+    mkdirSync(notifierDir, { recursive: true })
+    writeFileSync(configFile, JSON.stringify(settings, null, 2) + '\n', 'utf8')
+  }
+  let config = resolveSettings(raw, readUserConfig())
+
+  ctx.inject(['webServer'], (httpCtx) => {
+    const web = (httpCtx as typeof httpCtx & {
+      webServer: { register: (route: {
+        kind: 'exact'
+        path: string
+        handler: (req: IncomingMessage, res: ServerResponse) => void | Promise<void>
+      }) => () => void }
+    }).webServer
+    httpCtx.effect(() => web.register({
+      kind: 'exact',
+      path: CONFIG_API_PATH,
+      handler: async (req, res) => {
+        if (req.method === 'GET') {
+          sendJson(res, 200, config)
+          return
+        }
+        if (req.method === 'PUT') {
+          try {
+            const parsed: unknown = JSON.parse(await readBody(req, MAX_CONFIG_BODY_BYTES))
+            // 与启动时同一条合并链：loader 旧配置 → 预设 → 显式字段。
+            const next = resolveSettings(raw, parsed)
+            saveUserConfig(next)
+            config = next
+            sendJson(res, 200, config)
+          } catch (error) {
+            sendJson(res, 400, {
+              error: 'INVALID_CONFIG',
+              message: error instanceof Error ? error.message : '配置不是合法 JSON',
+            })
+          }
+          return
+        }
+        res.setHeader('allow', 'GET, PUT')
+        res.writeHead(405)
+        res.end('method not allowed')
+      },
+    }), `${name}: config api`)
+  })
+
   const lastSeenStatus = new Map<string, 'idle' | 'running'>()
   const lastNotified = new Map<string, number>()
   const activeNotifiers = new Set<ChildProcess>()

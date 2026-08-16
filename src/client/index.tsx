@@ -11,9 +11,12 @@
  * 结束/错误 toast 自动消失；决策 toast 保持钉住，直到被回答/解决或手动关闭。
  * 点卡片会打开对应会话。另暴露 window.__DSH_NOTIFIER__（含 demo）便于验收。
  */
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { createPortal } from 'react-dom'
 import type { ConnectionHandle, HostFrame, MuxFrame } from '@deepseek-ai/dsh-client-connection/client'
+import { normalizeSettings, type NotifierSettings } from '../shared'
+import { NotifierStore } from './config-store'
+import { NOTIFIER_SETTINGS_CSS, NotifierSettingsSection } from './settings-section'
 
 type ToastKind = 'done' | 'approval' | 'question' | 'error'
 
@@ -46,7 +49,13 @@ interface ClientContext {
   }
   slots: {
     inject(slot: string, factory: () => unknown): unknown
-    register(options: { name: string; id: string; order?: number }, component: unknown): unknown
+    register(options: {
+      name: string
+      id: string
+      order?: number
+      label?: () => string
+      inject?: () => unknown
+    }, component: unknown): unknown
   }
 }
 
@@ -94,9 +103,43 @@ function chime(): void {
   }
 }
 
-const CSS = `
-.dsh-notifier-stack{position:fixed;right:18px;bottom:18px;z-index:2147483000;display:flex;flex-direction:column;gap:10px;width:min(380px,calc(100vw - 36px));pointer-events:none;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif}
-.dsh-notifier-toast{pointer-events:auto;position:relative;display:flex;gap:10px;align-items:flex-start;padding:12px 14px;border-radius:14px;background:rgba(17,24,39,.96);border:1px solid rgba(148,163,184,.28);color:#E5E7EB;box-shadow:0 16px 40px rgba(2,6,23,.45);backdrop-filter:blur(10px);animation:dsh-notifier-in .22s cubic-bezier(.2,.9,.3,1.2)}
+function buildNotifierCss(settings: NotifierSettings): string {
+  const dark = settings.toast.theme === 'dark'
+  const colors = dark
+    ? {
+        bg: 'rgba(17,24,39,.96)',
+        border: 'rgba(148,163,184,.28)',
+        text: '#E5E7EB',
+        title: '#F9FAFB',
+        body: '#9CA3AF',
+        meta: '#6B7280',
+        btnBg: 'rgba(255,255,255,.06)',
+        btnBgHover: 'rgba(255,255,255,.12)',
+        btnBorder: 'rgba(148,163,184,.35)',
+        closeHover: 'rgba(255,255,255,.08)',
+        shadow: 'rgba(2,6,23,.45)',
+      }
+    : {
+        bg: 'rgba(255,255,255,.98)',
+        border: 'rgba(15,23,42,.14)',
+        text: '#111827',
+        title: '#0F172A',
+        body: '#4B5563',
+        meta: '#6B7280',
+        btnBg: 'rgba(15,23,42,.04)',
+        btnBgHover: 'rgba(15,23,42,.09)',
+        btnBorder: 'rgba(15,23,42,.16)',
+        closeHover: 'rgba(15,23,42,.08)',
+        shadow: 'rgba(15,23,42,.22)',
+      }
+  const display = settings.toast.enabled ? 'flex' : 'none'
+  return `
+.dsh-notifier-stack{position:fixed;z-index:2147483000;display:${display};flex-direction:column;gap:10px;width:min(${settings.toast.width}px,calc(100vw - 36px));pointer-events:none;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;--n-radius:${settings.toast.radius}px;--n-bg:${colors.bg};--n-border:${colors.border};--n-text:${colors.text};--n-title:${colors.title};--n-body:${colors.body};--n-meta:${colors.meta};--n-btn-bg:${colors.btnBg};--n-btn-bg-hover:${colors.btnBgHover};--n-btn-border:${colors.btnBorder};--n-close-hover:${colors.closeHover};--n-shadow:${colors.shadow}}
+.dsh-notifier-stack[data-position="bottom-right"]{top:auto;right:18px;bottom:18px;left:auto}
+.dsh-notifier-stack[data-position="bottom-left"]{top:auto;right:auto;bottom:18px;left:18px}
+.dsh-notifier-stack[data-position="top-right"]{top:18px;right:18px;bottom:auto;left:auto}
+.dsh-notifier-stack[data-position="top-left"]{top:18px;right:auto;bottom:auto;left:18px}
+.dsh-notifier-toast{pointer-events:auto;position:relative;display:flex;gap:10px;align-items:flex-start;padding:12px 14px;border-radius:var(--n-radius);background:var(--n-bg);border:1px solid var(--n-border);color:var(--n-text);box-shadow:0 16px 40px var(--n-shadow);backdrop-filter:blur(10px);animation:dsh-notifier-in .22s cubic-bezier(.2,.9,.3,1.2)}
 .dsh-notifier-toast.leaving{animation:dsh-notifier-out .18s ease forwards}
 .dsh-notifier-toast::before{content:"";position:absolute;left:0;top:12px;bottom:12px;width:3px;border-radius:99px;background:#34D399}
 .dsh-notifier-toast.kind-approval::before,.dsh-notifier-toast.kind-question::before{background:#FBBF24}
@@ -104,19 +147,22 @@ const CSS = `
 .dsh-notifier-toast.kind-question::before{background:#60A5FA}
 .dsh-notifier-icon{flex:none;width:22px;height:22px;display:grid;place-items:center;font-size:15px;line-height:1}
 .dsh-notifier-main{min-width:0;flex:1;display:flex;flex-direction:column;gap:3px}
-.dsh-notifier-title{margin:0;font-size:13px;font-weight:650;line-height:18px;color:#F9FAFB;display:flex;align-items:center;gap:6px}
-.dsh-notifier-body{margin:0;font-size:12px;line-height:17px;color:#9CA3AF;word-break:break-word;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
-.dsh-notifier-meta{font-size:10px;color:#6B7280;font-variant-numeric:tabular-nums}
+.dsh-notifier-title{margin:0;font-size:13px;font-weight:650;line-height:18px;color:var(--n-title);display:flex;align-items:center;gap:6px}
+.dsh-notifier-body{margin:0;font-size:12px;line-height:17px;color:var(--n-body);word-break:break-word;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
+.dsh-notifier-meta{font-size:10px;color:var(--n-meta);font-variant-numeric:tabular-nums}
 .dsh-notifier-actions{display:flex;gap:6px;margin-top:6px}
-.dsh-notifier-btn{font:inherit;font-size:12px;line-height:18px;padding:4px 10px;border-radius:8px;border:1px solid rgba(148,163,184,.35);background:rgba(255,255,255,.06);color:#E5E7EB;cursor:pointer}
-.dsh-notifier-btn:hover{background:rgba(255,255,255,.12)}
+.dsh-notifier-btn{font:inherit;font-size:12px;line-height:18px;padding:4px 10px;border-radius:8px;border:1px solid var(--n-btn-border);background:var(--n-btn-bg);color:var(--n-text);cursor:pointer}
+.dsh-notifier-btn:hover{background:var(--n-btn-bg-hover)}
 .dsh-notifier-btn.primary{background:#4D6BFE;border-color:#4D6BFE;color:#fff}
 .dsh-notifier-btn.primary:hover{background:#5B76FF}
-.dsh-notifier-close{flex:none;width:20px;height:20px;border:none;background:transparent;color:#9CA3AF;font-size:15px;line-height:1;cursor:pointer;border-radius:6px;padding:0}
-.dsh-notifier-close:hover{color:#F9FAFB;background:rgba(255,255,255,.08)}
+.dsh-notifier-close{flex:none;width:20px;height:20px;border:none;background:transparent;color:var(--n-body);font-size:15px;line-height:1;cursor:pointer;border-radius:6px;padding:0}
+.dsh-notifier-close:hover{color:var(--n-title);background:var(--n-close-hover)}
 @keyframes dsh-notifier-in{from{opacity:0;transform:translateY(14px) scale(.97)}to{opacity:1;transform:none}}
 @keyframes dsh-notifier-out{to{opacity:0;transform:translateY(10px) scale(.97)}}
+${NOTIFIER_SETTINGS_CSS}
 `
+}
+
 
 const KIND_ICON: Record<ToastKind, string> = {
   done: '✅',
@@ -127,8 +173,10 @@ const KIND_ICON: Record<ToastKind, string> = {
 
 /* ─────────────────────────────── 组件 ─────────────────────────────── */
 
-function makeOverlayComponent(ctx: ClientContext) {
+function makeOverlayComponent(ctx: ClientContext, store: NotifierStore) {
   return function NotifierOverlay() {
+    const settingsState = useSyncExternalStore(store.subscribe, store.getSnapshot)
+    const settings = settingsState.settings
     const [toasts, setToasts] = useState<Toast[]>([])
     const ctxRef = useRef(ctx)
     ctxRef.current = ctx
@@ -173,13 +221,15 @@ function makeOverlayComponent(ctx: ClientContext) {
       }
 
       const push = (toast: Omit<Toast, 'key' | 'createdAt'>): void => {
+        const current = store.getSnapshot().settings
+        if (!current.toast.enabled) return
         sequenceRef.current += 1
         const key = `${toast.baseKey}:${sequenceRef.current}`
         const full: Toast = { ...toast, key, createdAt: Date.now() }
-        setToasts((prev) => [full, ...prev].slice(0, 6))
-        chime()
+        setToasts((prev) => [full, ...prev].slice(0, current.toast.maxCount))
+        if (current.toast.sound) chime()
         if (!full.sticky) {
-          const ttl = full.kind === 'error' ? 10000 : 6000
+          const ttl = (full.kind === 'error' ? current.toast.errorDurationSeconds : current.toast.durationSeconds) * 1000
           const timer = window.setTimeout(() => dismiss(full.key), ttl)
           timersRef.current.set(full.key, timer)
         }
@@ -334,7 +384,7 @@ function makeOverlayComponent(ctx: ClientContext) {
     }
 
     return createPortal(
-      <div className="dsh-notifier-stack" role="status" aria-live="polite">
+      <div className="dsh-notifier-stack" data-position={settings.toast.position} role="status" aria-live="polite">
         {toasts.map((toast) => (
           <div
             key={toast.key}
@@ -393,13 +443,20 @@ function makeOverlayComponent(ctx: ClientContext) {
 /* ─────────────────────────────── 插件入口 ─────────────────────────────── */
 
 export function apply(ctx: ClientContext): void {
+  const store = new NotifierStore()
+  void store.load()
+
   ctx.effect(() => {
     // 注入 <style>：slot 重挂载时由 effect 清理，避免样式重复。
     const style = document.createElement('style')
     style.id = '@dsh-external/dsh-notifier-style'
-    style.textContent = CSS
+    const refreshStyle = (): void => {
+      style.textContent = buildNotifierCss(store.getSnapshot().settings)
+    }
+    refreshStyle()
     document.head.appendChild(style)
 
+    const offStore = store.subscribe(refreshStyle)
     const dispose = ctx.slots.inject('shell.overlay', () =>
       ctx.slots.register(
         {
@@ -407,13 +464,27 @@ export function apply(ctx: ClientContext): void {
           id: '@dsh-external/dsh-notifier-overlay',
           order: 80,
         },
-        makeOverlayComponent(ctx),
+        makeOverlayComponent(ctx, store),
       ),
     )
 
     return () => {
+      offStore()
       if (typeof dispose === 'function') (dispose as () => void)()
       style.remove()
     }
   }, '@dsh-external/dsh-notifier: overlay')
+
+  ctx.slots.inject('settings.section', () =>
+    ctx.slots.register(
+      {
+        name: 'settings.section',
+        id: 'notifier',
+        order: 18,
+        label: () => '提醒通知',
+        inject: () => ({ store }),
+      },
+      NotifierSettingsSection,
+    ),
+  )
 }
