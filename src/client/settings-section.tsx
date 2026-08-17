@@ -405,8 +405,8 @@ export function NotifierSettingsSection(props: { store: NotifierStore }): JSX.El
         <h3>手机推送（DSH-Remote 桥接）</h3>
         <p className="dns-muted">
           在 dsh-remote bridge 配置了地址和主 token 后，PC 弹窗的「任务完成」「需要你回答」
-          会同步推给已连接的手机 App（App 前台时显示横幅，可点击直达会话）。留空 = 关闭。
-          可分别用下面的开关控制是否转发、以及转发哪些类型。
+          会同步推给已连接的手机 App（Android 后台保活时也能收到系统通知，可点击直达会话）。
+          留空 = 关闭。可分别用下面的开关控制是否转发、以及转发哪些类型。
         </p>
         <div className="dns-field">
           <span className="dns-label">bridge 地址（如 http://127.0.0.1:8787）</span>
