@@ -49,6 +49,10 @@ export interface NotifierConfig {
   bridgeUrl?: string
   /** dsh-remote bridge 主 token；也可用环境变量 DSH_BRIDGE_TOKEN */
   bridgeToken?: string
+  /** 总开关：是否把 PC 弹窗转发到已连接的手机（默认 true） */
+  bridgePush?: boolean
+  /** 按事件类型选择转发哪些到手机 */
+  bridgePushKinds?: { done?: boolean; question?: boolean }
   /** 同一事件的最短重复提醒间隔，秒（默认 8） */
   quietSeconds?: number
 }
@@ -118,6 +122,8 @@ const DEFAULTS: Required<Omit<NotifierConfig, 'webUrl'>> & { webUrl: string } = 
   webUrl: process.env.DSH_WEB_URL || 'http://127.0.0.1:3080',
   bridgeUrl: '',
   bridgeToken: process.env.DSH_BRIDGE_TOKEN || '',
+  bridgePush: true,
+  bridgePushKinds: { done: true, question: true },
   quietSeconds: 8,
 }
 
@@ -136,6 +142,8 @@ function resolveSettings(rawBase: NotifierConfig, userInput: unknown): NotifierS
     webUrl: rawBase.webUrl ?? DEFAULT_SETTINGS.webUrl,
     bridgeUrl: rawBase.bridgeUrl ?? DEFAULT_SETTINGS.bridgeUrl,
     bridgeToken: rawBase.bridgeToken ?? process.env.DSH_BRIDGE_TOKEN ?? DEFAULT_SETTINGS.bridgeToken,
+    bridgePush: rawBase.bridgePush ?? DEFAULT_SETTINGS.bridgePush,
+    bridgePushKinds: rawBase.bridgePushKinds ?? DEFAULT_SETTINGS.bridgePushKinds,
   }
 
   const merged: NotifierSettings = normalizeSettings({
@@ -150,6 +158,8 @@ function resolveSettings(rawBase: NotifierConfig, userInput: unknown): NotifierS
     ...(root.webUrl !== undefined ? { webUrl: root.webUrl } : {}),
     ...(root.bridgeUrl !== undefined ? { bridgeUrl: root.bridgeUrl } : {}),
     ...(root.bridgeToken !== undefined ? { bridgeToken: root.bridgeToken } : {}),
+    ...(root.bridgePush !== undefined ? { bridgePush: root.bridgePush } : {}),
+    ...(root.bridgePushKinds !== undefined ? { bridgePushKinds: root.bridgePushKinds } : {}),
   })
 
   // 只有显式改过行为字段才重新判定指纹；只选 preset（或只改 webUrl）时保留请求的预设 id。
@@ -233,6 +243,20 @@ export interface BridgeNotifyPayload {
 
 /** 转发到手机的提醒种类（PC 弹窗的子集：任务完成 + 需要回答）。 */
 export const BRIDGE_NOTIFY_KINDS: ReadonlySet<NotifyKind> = new Set(['done', 'question'])
+
+/**
+ * 按用户开关判断某类提醒是否要转发到手机：总开关 bridgePush 必须打开，
+ * 且该 kind 的细分开关（bridgePushKinds）必须打开。纯函数，便于测试。
+ */
+export function bridgeForwardEnabled(
+  settings: Pick<NotifierSettings, 'bridgePush' | 'bridgePushKinds'>,
+  kind: NotifyKind,
+): boolean {
+  if (!settings.bridgePush) return false
+  if (kind === 'done') return settings.bridgePushKinds.done
+  if (kind === 'question') return settings.bridgePushKinds.question
+  return false
+}
 
 const BRIDGE_PUSH_TIMEOUT_MS = 3000
 
@@ -531,8 +555,10 @@ export function apply(ctx: Context, raw: NotifierConfig = {}): void {
     log(`${kind} → ${title} | ${message}`)
     desktopNotify(title, message, KIND_SOUND[kind])
     void floatingNotify(kind, title, message, opts)
-    // 给手机也发一份（仅 done/question 两类 hook 转发；bridge 未配置时静默跳过）。
-    void pushBridgeNotify(config.bridgeUrl, config.bridgeToken, { kind, title, message, sessionId }, log)
+    // 给手机也发一份：受「手机推送」总开关 + 按类型开关约束（bridge 未配置时静默跳过）。
+    if (bridgeForwardEnabled(config, kind)) {
+      void pushBridgeNotify(config.bridgeUrl, config.bridgeToken, { kind, title, message, sessionId }, log)
+    }
   }
 
   /* ─────────── 事件监听（Hook） ─────────── */
@@ -606,5 +632,5 @@ export function apply(ctx: Context, raw: NotifierConfig = {}): void {
     }
   }, `${name}: notifier cleanup`)
 
-  log(`host half 已启动（desktop=${config.desktop}, floating=${config.floating}, webUrl=${config.webUrl}, bridge=${config.bridgeUrl || 'off'}）`)
+  log(`host half 已启动（desktop=${config.desktop}, floating=${config.floating}, webUrl=${config.webUrl}, bridge=${config.bridgeUrl || 'off'}, bridgePush=${config.bridgePush ? `on(done=${config.bridgePushKinds.done},question=${config.bridgePushKinds.question})` : 'off'}）`)
 }

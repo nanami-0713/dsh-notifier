@@ -406,6 +406,7 @@ export function NotifierSettingsSection(props: { store: NotifierStore }): JSX.El
         <p className="dns-muted">
           在 dsh-remote bridge 配置了地址和主 token 后，PC 弹窗的「任务完成」「需要你回答」
           会同步推给已连接的手机 App（App 前台时显示横幅，可点击直达会话）。留空 = 关闭。
+          可分别用下面的开关控制是否转发、以及转发哪些类型。
         </p>
         <div className="dns-field">
           <span className="dns-label">bridge 地址（如 http://127.0.0.1:8787）</span>
@@ -438,6 +439,52 @@ export function NotifierSettingsSection(props: { store: NotifierStore }): JSX.El
               }))
             }
           />
+        </div>
+        <label className="dns-check">
+          <input
+            type="checkbox"
+            checked={draft.bridgePush}
+            onChange={(event) =>
+              mutate((previous) => ({
+                ...previous,
+                preset: 'custom',
+                bridgePush: event.target.checked,
+              }))
+            }
+          />
+          转发到已连接的手机（总开关）
+        </label>
+        <div className="dns-grid">
+          <label className="dns-check">
+            <input
+              type="checkbox"
+              disabled={!draft.bridgePush}
+              checked={draft.bridgePush && draft.bridgePushKinds.done}
+              onChange={(event) =>
+                mutate((previous) => ({
+                  ...previous,
+                  preset: 'custom',
+                  bridgePushKinds: { ...previous.bridgePushKinds, done: event.target.checked },
+                }))
+              }
+            />
+            任务完成
+          </label>
+          <label className="dns-check">
+            <input
+              type="checkbox"
+              disabled={!draft.bridgePush}
+              checked={draft.bridgePush && draft.bridgePushKinds.question}
+              onChange={(event) =>
+                mutate((previous) => ({
+                  ...previous,
+                  preset: 'custom',
+                  bridgePushKinds: { ...previous.bridgePushKinds, question: event.target.checked },
+                }))
+              }
+            />
+            需要你回答
+          </label>
         </div>
       </div>
 

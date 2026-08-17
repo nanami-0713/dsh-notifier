@@ -49,6 +49,15 @@ export interface NotifierSettings {
   bridgeUrl: string
   /** dsh-remote bridge 主 token（与 bridge 的 config.json token 一致）。 */
   bridgeToken: string
+  /** 总开关：是否把 PC 弹窗转发到已连接的手机。 */
+  bridgePush: boolean
+  /** 按事件类型选择转发哪些到手机（受 bridgePush 总开关约束）。 */
+  bridgePushKinds: {
+    /** 任务完成 */
+    done: boolean
+    /** 需要你回答 */
+    question: boolean
+  }
 }
 
 export interface NotifierPreset {
@@ -78,6 +87,8 @@ export const DEFAULT_SETTINGS: NotifierSettings = Object.freeze({
   webUrl: 'http://127.0.0.1:3080',
   bridgeUrl: '',
   bridgeToken: '',
+  bridgePush: true,
+  bridgePushKinds: Object.freeze({ done: true, question: true }),
 })
 
 export const NOTIFIER_PRESETS: readonly NotifierPreset[] = [
@@ -93,6 +104,8 @@ export const NOTIFIER_PRESETS: readonly NotifierPreset[] = [
       webUrl: DEFAULT_SETTINGS.webUrl,
       bridgeUrl: '',
       bridgeToken: '',
+      bridgePush: true,
+      bridgePushKinds: { done: true, question: true },
     },
   },
   {
@@ -117,6 +130,8 @@ export const NOTIFIER_PRESETS: readonly NotifierPreset[] = [
       webUrl: DEFAULT_SETTINGS.webUrl,
       bridgeUrl: '',
       bridgeToken: '',
+      bridgePush: true,
+      bridgePushKinds: { done: true, question: true },
     },
   },
   {
@@ -141,6 +156,8 @@ export const NOTIFIER_PRESETS: readonly NotifierPreset[] = [
       webUrl: DEFAULT_SETTINGS.webUrl,
       bridgeUrl: '',
       bridgeToken: '',
+      bridgePush: true,
+      bridgePushKinds: { done: true, question: true },
     },
   },
   {
@@ -155,6 +172,8 @@ export const NOTIFIER_PRESETS: readonly NotifierPreset[] = [
       webUrl: DEFAULT_SETTINGS.webUrl,
       bridgeUrl: '',
       bridgeToken: '',
+      bridgePush: true,
+      bridgePushKinds: { done: true, question: true },
     },
   },
 ]
@@ -211,6 +230,17 @@ export function normalizeSettings(input: unknown): NotifierSettings {
     webUrl: stringValue(root.webUrl, DEFAULT_SETTINGS.webUrl, 512),
     bridgeUrl: stringValue(root.bridgeUrl, DEFAULT_SETTINGS.bridgeUrl, 512),
     bridgeToken: stringValue(root.bridgeToken, DEFAULT_SETTINGS.bridgeToken, 512),
+    bridgePush: boolValue(root.bridgePush, DEFAULT_SETTINGS.bridgePush),
+    bridgePushKinds: {
+      done: boolValue(
+        isRecord(root.bridgePushKinds) ? root.bridgePushKinds.done : undefined,
+        DEFAULT_SETTINGS.bridgePushKinds.done,
+      ),
+      question: boolValue(
+        isRecord(root.bridgePushKinds) ? root.bridgePushKinds.question : undefined,
+        DEFAULT_SETTINGS.bridgePushKinds.question,
+      ),
+    },
   }
   settings.preset = canonicalPresetId(settings)
   return settings
@@ -253,5 +283,7 @@ export function applyPreset(current: NotifierSettings, preset: NotifierPreset): 
     webUrl: current.webUrl,
     bridgeUrl: current.bridgeUrl,
     bridgeToken: current.bridgeToken,
+    bridgePush: current.bridgePush,
+    bridgePushKinds: current.bridgePushKinds,
   })
 }

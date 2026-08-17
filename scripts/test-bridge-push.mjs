@@ -1,7 +1,7 @@
 // Verifies pushBridgeNotify against a stub bridge server (no DSH needed).
 // Usage: node scripts/test-bridge-push.mjs  (after npm run build:host)
 import { createServer } from 'node:http';
-import { pushBridgeNotify } from '../lib/index.js';
+import { bridgeForwardEnabled, pushBridgeNotify } from '../lib/index.js';
 
 const requests = [];
 const server = createServer((req, res) => {
@@ -64,5 +64,15 @@ try {
 }
 
 server.close();
+
+// 6. bridgeForwardEnabled: 总开关 + 按类型开关
+const allOn = { bridgePush: true, bridgePushKinds: { done: true, question: true } };
+check(bridgeForwardEnabled(allOn, 'done') === true, 'done forwarded when all switches on');
+check(bridgeForwardEnabled(allOn, 'question') === true, 'question forwarded when all switches on');
+check(bridgeForwardEnabled(allOn, 'approval') === false, 'approval never forwarded');
+check(bridgeForwardEnabled({ ...allOn, bridgePush: false }, 'done') === false, 'master switch off blocks done');
+check(bridgeForwardEnabled({ ...allOn, bridgePushKinds: { done: false, question: true } }, 'done') === false, 'kind switch off blocks done');
+check(bridgeForwardEnabled({ ...allOn, bridgePushKinds: { done: true, question: false } }, 'question') === false, 'kind switch off blocks question');
+
 console.log(failed ? 'bridge push tests FAILED' : 'bridge push tests passed');
 process.exit(failed ? 1 : 0);
