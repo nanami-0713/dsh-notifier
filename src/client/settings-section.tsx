@@ -1,5 +1,5 @@
 /**
- * @dsh-external/dsh-notifier — 设置页（settings.section）。
+ * @hsinsekai-nanami/dsh-notifier — 设置页（settings.section）。
  * 预设一键切换 + 网页 toast 样式/位置 + 跨窗口与系统通知开关。
  */
 import { useEffect, useRef, useState, useSyncExternalStore } from 'react'

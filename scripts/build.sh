@@ -1,5 +1,5 @@
 #!/bin/bash
-# @dsh-external/dsh-notifier build.
+# @hsinsekai-nanami/dsh-notifier build.
 # 无 monorepo 依赖：devDependencies 全部来自 npm，node_modules 缺失时自动安装。
 # 产物：lib/index.js（host, ESM）+ lib/client.js（web toast 弹窗, ModuleLoader bundle）。
 set -euo pipefail

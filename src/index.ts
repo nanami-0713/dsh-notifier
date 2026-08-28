@@ -1,5 +1,5 @@
 /**
- * @dsh-external/dsh-notifier — host half（系统级提醒，相当于 Claude Code 的 Hook）。
+ * @hsinsekai-nanami/dsh-notifier — host half（系统级提醒，相当于 Claude Code 的 Hook）。
  *
  * 监听 DSH 运行时事件，在「任务结束」「需要用户决策（审批/提问）」「任务出错」时：
  *   1. 拉起跨窗口可见的 always-on-top 悬浮面板（macOS 用自带 Swift notifier，
@@ -35,7 +35,7 @@ import {
   type NotifierSettings,
 } from './shared.js'
 
-export const name = '@dsh-external/dsh-notifier'
+export const name = '@hsinsekai-nanami/dsh-notifier'
 export const inject = ['webServer']
 
 export interface NotifierConfig {

@@ -1,12 +1,12 @@
 /**
- * @dsh-external/dsh-notifier — 共享配置模型（host 与 client 共用）。
+ * @hsinsekai-nanami/dsh-notifier — 共享配置模型（host 与 client 共用）。
  *
  * 用户配置持久化在 ~/.dsh/plugins/dsh-notifier/config.json，
  * 由 host 半通过同源 HTTP API 读写；默认走 `default` 预设，
  * 用户修改任意字段后自动标记为 `custom` 预设。
  */
 
-export const PLUGIN_ID = '@dsh-external/dsh-notifier'
+export const PLUGIN_ID = '@hsinsekai-nanami/dsh-notifier'
 
 export const CONFIG_API_PATH = '/api/dsh-notifier/config'
 

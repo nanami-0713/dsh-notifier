@@ -1,4 +1,7 @@
-# @dsh-external/dsh-notifier
+# @hsinsekai-nanami/dsh-notifier
+
+[![npm version](https://img.shields.io/npm/v/@hsinsekai-nanami/dsh-notifier)](https://www.npmjs.com/package/@hsinsekai-nanami/dsh-notifier)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
 DSH 的任务提醒插件：**任务运行结束**、**运行中需要你做决策（权限审批 / 用户提问）**时，弹出**跨窗口可见**的提醒——类似 Codex / Claude Code 的 Hook 通知体验：你切到任何应用、任何桌面空间（甚至全屏应用）都能看到。
 
@@ -51,20 +54,26 @@ DSH 的任务提醒插件：**任务运行结束**、**运行中需要你做决�
 
 ## 安装
 
-### 方式一：GitHub Release 安装（推荐）
+### 方式一：npm 安装（推荐）
 
-1. 到 [Releases](https://github.com/nanami-0713/dsh-notifier/releases) 下载最新 `dsh-external-dsh-notifier-<版本>.tgz`
-2. 解压，然后把插件装进 web profile：
+已发布 npm，一条命令装完：
 
 ```bash
-dsh plugin --profile web add <解压目录>
-# 或：编辑 ~/.dsh/profiles/web/package.json：
-#   "dependencies": { "@dsh-external/dsh-notifier": "link:<解压目录>" },
-#   "dsh": { "profile": { "bundles": [..., "@dsh-external/dsh-notifier"] } }
+dsh plugin --profile web add @hsinsekai-nanami/dsh-notifier@0.5.0
+dsh web   # 启动或重启后生效
+```
+
+### 方式二：GitHub Release 安装
+
+1. 到 [Releases](https://github.com/nanami-0713/dsh-notifier/releases) 下载最新 `hsinsekai-nanami-dsh-notifier-<版本>.tgz`
+2. 把 tgz 直接装进 web profile（无需解压）：
+
+```bash
+dsh plugin --profile web add ./hsinsekai-nanami-dsh-notifier-<版本>.tgz
 dsh web   # 重启后自动装配
 ```
 
-### 方式二：源码构建安装
+### 方式三：源码构建安装
 
 ```bash
 git clone https://github.com/nanami-0713/dsh-notifier.git

@@ -1,6 +1,6 @@
 import type { UserConfig } from 'tsdown'
 
-const PLUGIN_ID = '@dsh-external/dsh-notifier'
+const PLUGIN_ID = '@hsinsekai-nanami/dsh-notifier'
 
 /**
  * client 产物必须是 ModuleLoader.load 包起来的 CJS bundle。

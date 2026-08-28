@@ -1,5 +1,5 @@
 /**
- * @dsh-external/dsh-notifier — client 配置 store。
+ * @hsinsekai-nanami/dsh-notifier — client 配置 store。
  * 读取 / 保存 host 同源 API，preview 立即把草稿推给 toast 渲染层。
  */
 import {

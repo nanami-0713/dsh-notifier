@@ -1,5 +1,5 @@
 /**
- * @dsh-external/dsh-notifier — client half（web toast 弹窗）。
+ * @hsinsekai-nanami/dsh-notifier — client half（web toast 弹窗）。
  *
  * 挂在官方 `shell.overlay` 槽位（list slot，可叠加、不遮挡应用），订阅
  * DSH 的两条实时事件流：
@@ -449,7 +449,7 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(() => {
     // 注入 <style>：slot 重挂载时由 effect 清理，避免样式重复。
     const style = document.createElement('style')
-    style.id = '@dsh-external/dsh-notifier-style'
+    style.id = '@hsinsekai-nanami/dsh-notifier-style'
     const refreshStyle = (): void => {
       style.textContent = buildNotifierCss(store.getSnapshot().settings)
     }
@@ -461,7 +461,7 @@ export function apply(ctx: ClientContext): void {
       ctx.slots.register(
         {
           name: 'shell.overlay',
-          id: '@dsh-external/dsh-notifier-overlay',
+          id: '@hsinsekai-nanami/dsh-notifier-overlay',
           order: 80,
         },
         makeOverlayComponent(ctx, store),
@@ -473,7 +473,7 @@ export function apply(ctx: ClientContext): void {
       if (typeof dispose === 'function') (dispose as () => void)()
       style.remove()
     }
-  }, '@dsh-external/dsh-notifier: overlay')
+  }, '@hsinsekai-nanami/dsh-notifier: overlay')
 
   ctx.slots.inject('settings.section', () =>
     ctx.slots.register(
